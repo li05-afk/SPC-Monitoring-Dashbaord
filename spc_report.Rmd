@@ -1,0 +1,88 @@
+---
+title: "SPC Monitoring Dashboard"
+author: "Sharon Jia Yi Lee"
+date: "2026-05-17"
+output: html_document
+---
+
+## Overview
+Statistical Process Control (SPC) analysis across 5 process parameters 
+and 5 fabrication steps using real semiconductor sensor data. 
+Shewhart X-bar control charts are applied to detect out-of-control signals 
+that could indicate quality issues in wafer production.
+
+## Dataset
+- **Source:** Semiconductor Wafer Defect Classification Dataset (Kaggle)
+- **Records:** 5,000 wafer sensor readings
+- **Parameters monitored:** Temperature, Pressure, Gas Flow, Etch Rate, Voltage, Current
+- **Process Steps:** CMP, Deposition, Etching, Lithography, Oxidation
+
+## Violations Summary Table
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(dplyr)
+library(qcc)
+library(ggplot2)
+
+df <- read.csv("semiconductor_wafer_defect_dataset.csv")
+
+parameters <- c("temperature_c", "pressure_torr", "etch_rate_nm_min", 
+                "voltage_v", "current_ma")
+steps <- unique(df$process_step)
+results <- data.frame()
+
+for (param in parameters) {
+  for (step in steps) {
+    step_data <- df %>% filter(process_step == step) %>% pull(!!sym(param))
+    n_groups  <- floor(length(step_data) / 5)
+    grouped   <- matrix(step_data[1:(n_groups * 5)], ncol=5, byrow=TRUE)
+    chart     <- qcc(grouped, type="xbar", plot=FALSE)
+    beyond    <- sum(chart$violations$beyond.limits)
+    runs      <- length(chart$violations$violating.runs)
+    results   <- rbind(results, data.frame(
+      Parameter      = param,
+      Process_Step   = step,
+      UCL            = round(chart$limits[,2][1], 3),
+      LCL            = round(chart$limits[,1][1], 3),
+      Beyond_Limits  = beyond,
+      Violating_Runs = runs,
+      Status         = ifelse(beyond > 0 | runs > 0, "⚠ OUT OF CONTROL", "✓ Stable")
+    ))
+  }
+}
+
+knitr::kable(results)
+```
+
+## SPC Violations Heatmap
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=6}
+results$Total_Violations <- results$Beyond_Limits + results$Violating_Runs
+
+ggplot(results, aes(x=Process_Step, y=Parameter, fill=Total_Violations)) +
+  geom_tile(color="white", linewidth=0.8) +
+  geom_text(aes(label=ifelse(Total_Violations > 0,
+                             paste0("⚠ ", Total_Violations), "✓")),
+            size=3.5, color="white", fontface="bold") +
+  scale_fill_gradient(low="steelblue", high="tomato", name="Total\nViolations") +
+  labs(
+    title    = "SPC Violations Heatmap — Wafer Fabrication Process",
+    subtitle = "Red = high violations | Blue = stable | ✓ = in control",
+    x        = "Process Step",
+    y        = "Parameter"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title   = element_text(face="bold", size=14),
+    axis.text.x  = element_text(angle=45, hjust=1)
+  )
+```
+
+## Key Findings
+- **22 of 25** parameter-step combinations flagged as out of control
+- **pressure_torr in CMP** has the highest violations (190) — highest priority for investigation
+- **temperature_c in Lithography and Oxidation** show critical beyond-limit breaches (187, 157)
+- **3 stable combinations:** temperature Deposition, etch rate Lithography, voltage Oxidation
+
+## Methodology
+- Shewhart X-bar control charts with subgroup size n=5
+- Western Electric Rules applied for run detection
+- Data balanced using SMOTE prior to defect classification
